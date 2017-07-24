@@ -30,6 +30,7 @@
 #include <inavr.h>
 #include <ioavr.h>
 #endif
+#include <avr/pgmspace.h>
 #include "USI_TWI_Master.h"
 
 unsigned char USI_TWI_Master_Transfer(unsigned char);
@@ -63,6 +64,9 @@ void USI_TWI_Master_Initialise(void)
 	        (0 << USITC);
 	USISR = (1 << USISIF) | (1 << USIOIF) | (1 << USIPF) | (1 << USIDC) | // Clear flags,
 	        (0x0 << USICNT0);                                             // and reset counter.
+	USI_TWI_state.errorState = 0;
+	USI_TWI_state.addressMode = 0;
+	USI_TWI_state.masterWriteDataMode = 0;
 }
 
 /*---------------------------------------------------------------
@@ -84,7 +88,7 @@ unsigned char USI_TWI_Get_State_Info(void)
  Success or error code is returned. Error codes are defined in
  USI_TWI_Master.h
 ---------------------------------------------------------------*/
-unsigned char USI_TWI_Start_Transceiver_With_Data(unsigned char *msg, unsigned char msgSize) {
+unsigned char USI_TWI_Start_Transceiver_With_Data(const unsigned char *msg, size_t msgSize) {
 	return USI_TWI_Start_Transceiver_With_Data_Stop(msg, msgSize, TRUE);
 }
 
@@ -99,7 +103,16 @@ unsigned char USI_TWI_Start_Transceiver_With_Data(unsigned char *msg, unsigned c
 __x // AVR compiler
 #endif
     unsigned char
-    USI_TWI_Start_Transceiver_With_Data_Stop(unsigned char *msg, unsigned char msgSize, unsigned char stop)
+    USI_TWI_Start_Transceiver_With_Data_Stop(const unsigned char *msg, size_t msgSize, unsigned char stop) {
+      return USI_TWI_Start_Transceiver_With_Data_Stop2(msg, msgSize, stop, false, 1, 0);
+
+}
+
+#ifndef __GNUC__
+__x // AVR compiler
+#endif
+    unsigned char
+    USI_TWI_Start_Transceiver_With_Data_Stop2(const unsigned char *msg, uint16_t msgSize, unsigned char stop, bool progmem, uint16_t repeat, uint8_t repeatOffset)
 {
 	unsigned char tempUSISR_8bit = (1 << USISIF) | (1 << USIOIF) | (1 << USIPF) | (1 << USIDC)
 	                               |                 // Prepare register value to: Clear flags, and
@@ -145,6 +158,11 @@ __x // AVR compiler
 		USI_TWI_state.masterWriteDataMode = TRUE;
 	}
 
+	// Enable SDA as output. It's critical we do this again here, otherwise when
+  // switching from Slave to Master mode the first transmission fails for some
+  // reason.
+	DDR_USI |= (1 << PIN_USI_SDA);
+
 	/* Release SCL to ensure that (repeated) Start can be performed */
 	PORT_USI_CL |= (1 << PIN_USI_SCL); // Release SCL.
 	while (!(PIN_USI_CL & (1 << PIN_USI_SCL)))
@@ -168,42 +186,53 @@ __x // AVR compiler
 	}
 #endif
 
-	/*Write address and Read/Write data */
-	do {
-		/* If masterWrite cycle (or inital address tranmission)*/
-		if (USI_TWI_state.addressMode || USI_TWI_state.masterWriteDataMode) {
-			/* Write a byte */
-			PORT_USI_CL &= ~(1 << PIN_USI_SCL);         // Pull SCL LOW.
-			USIDR = *(msg++);                        // Setup data.
-			USI_TWI_Master_Transfer(tempUSISR_8bit); // Send 8 bits on bus.
+	const unsigned char* origMsg = msg;
+	size_t origMsgSize = msgSize;
+  do {
+		/*Write address and Read/Write data */
+		do {
+			/* If masterWrite cycle (or inital address tranmission)*/
+			if (USI_TWI_state.addressMode || USI_TWI_state.masterWriteDataMode) {
+				/* Write a byte */
+				PORT_USI_CL &= ~(1 << PIN_USI_SCL);         // Pull SCL LOW.
+				if (!progmem) {
+					USIDR = *(msg++);                        // Setup data.
+				} else {
+					USIDR = pgm_read_byte_near(msg++);                        // Setup data.
+				}
+				USI_TWI_Master_Transfer(tempUSISR_8bit); // Send 8 bits on bus.
 
-			/* Clock and verify (N)ACK from slave */
-			DDR_USI &= ~(1 << PIN_USI_SDA); // Enable SDA as input.
-			if (USI_TWI_Master_Transfer(tempUSISR_1bit) & (1 << TWI_NACK_BIT)) {
-				if (USI_TWI_state.addressMode)
-					USI_TWI_state.errorState = USI_TWI_NO_ACK_ON_ADDRESS;
-				else
-					USI_TWI_state.errorState = USI_TWI_NO_ACK_ON_DATA;
-				return (FALSE);
+				/* Clock and verify (N)ACK from slave */
+				DDR_USI &= ~(1 << PIN_USI_SDA); // Enable SDA as input.
+				if (USI_TWI_Master_Transfer(tempUSISR_1bit) & (1 << TWI_NACK_BIT)) {
+					if (USI_TWI_state.addressMode)
+						USI_TWI_state.errorState = USI_TWI_NO_ACK_ON_ADDRESS;
+					else
+						USI_TWI_state.errorState = USI_TWI_NO_ACK_ON_DATA;
+					PORTB &= ~_BV(PB4);
+					return (FALSE);
+				}
+				USI_TWI_state.addressMode = FALSE; // Only perform address transmission once.
 			}
-			USI_TWI_state.addressMode = FALSE; // Only perform address transmission once.
-		}
-		/* Else masterRead cycle*/
-		else {
-			/* Read a data byte */
-			DDR_USI &= ~(1 << PIN_USI_SDA); // Enable SDA as input.
-			*(msg++) = USI_TWI_Master_Transfer(tempUSISR_8bit);
+			/* Else masterRead cycle*/
+			else {
+				/* Read a data byte */
+				DDR_USI &= ~(1 << PIN_USI_SDA); // Enable SDA as input.
+				/**(msg++) = */USI_TWI_Master_Transfer(tempUSISR_8bit);
 
-			/* Prepare to generate ACK (or NACK in case of End Of Transmission) */
-			if (msgSize == 1) // If transmission of last byte was performed.
-			{
-				USIDR = 0xFF; // Load NACK to confirm End Of Transmission.
-			} else {
-				USIDR = 0x00; // Load ACK. Set data register bit 7 (output for SDA) low.
+				/* Prepare to generate ACK (or NACK in case of End Of Transmission) */
+				if (msgSize == 1) // If transmission of last byte was performed.
+				{
+					USIDR = 0xFF; // Load NACK to confirm End Of Transmission.
+				} else {
+					USIDR = 0x00; // Load ACK. Set data register bit 7 (output for SDA) low.
+				}
+				USI_TWI_Master_Transfer(tempUSISR_1bit); // Generate ACK/NACK.
 			}
-			USI_TWI_Master_Transfer(tempUSISR_1bit); // Generate ACK/NACK.
-		}
-	} while (--msgSize); // Until all data sent/received.
+		} while (--msgSize); // Until all data sent/received.
+		msg = origMsg+repeatOffset;
+		msgSize = origMsgSize-repeatOffset;
+	} while (--repeat > 0);
 
 	if (stop) {
 		USI_TWI_Master_Stop(); // Send a STOP condition on the TWI bus.

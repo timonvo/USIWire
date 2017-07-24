@@ -31,11 +31,13 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #endif
+#include <stdbool.h>
+#include <stddef.h>
 //********** Defines **********//
 // Defines controlling timing limits
 #define TWI_FAST_MODE
 
-#define SYS_CLK 4000.0 // [kHz]
+#define SYS_CLK 16000.0 // [kHz]
 
 #ifdef TWI_FAST_MODE                            // TWI FAST mode timing limits. SCL = 100-400kHz
 #define T2_TWI ((SYS_CLK * 1300) / 1000000) + 1 // >1,3us
@@ -49,7 +51,7 @@
 // Defines controling code generating
 //#define PARAM_VERIFICATION
 //#define NOISE_TESTING
-#define SIGNAL_VERIFY
+//#define SIGNAL_VERIFY
 
 // USI_TWI messages and flags and bit masks
 //#define SUCCESS   7
@@ -132,7 +134,13 @@ void USI_TWI_Master_Initialise(void);
 __x // AVR compiler
 #endif
     unsigned char
-    USI_TWI_Start_Transceiver_With_Data_Stop(unsigned char *, unsigned char, unsigned char);
-unsigned char USI_TWI_Start_Transceiver_With_Data(unsigned char *, unsigned char);
+    USI_TWI_Start_Transceiver_With_Data_Stop2(const unsigned char *, uint16_t, unsigned char, bool progmem, uint16_t repeat, uint8_t repeatOffset);
+#ifndef __GNUC__
+__x // AVR compiler
+#endif
+    unsigned char
+    USI_TWI_Start_Transceiver_With_Data_Stop(const unsigned char *, size_t, unsigned char);
+unsigned char USI_TWI_Start_Transceiver_With_Data(const unsigned char *, size_t);
 
 unsigned char USI_TWI_Get_State_Info(void);
+unsigned char USI_TWI_Master_Stop(void);
