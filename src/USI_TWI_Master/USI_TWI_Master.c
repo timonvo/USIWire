@@ -152,8 +152,8 @@ __x // AVR compiler
 	}
 #endif
 
-	if (!(*msg
-	      & (1 << TWI_READ_BIT))) // The LSB in the address byte determines if is a masterRead or masterWrite operation.
+	uint8_t addressByte = !progmem ? *msg : pgm_read_byte_near(msg);
+	if (!(addressByte & (1 << TWI_READ_BIT))) // The LSB in the address byte determines if is a masterRead or masterWrite operation.
 	{
 		USI_TWI_state.masterWriteDataMode = TRUE;
 	}
