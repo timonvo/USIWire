@@ -24,13 +24,103 @@
 *                     success of the transmission.
 *
 ****************************************************************************/
+#include "USI_TWI_Master.h"
+
 #if __GNUC__
+#ifndef F_CPU
+#define F_CPU 4000000
+#endif
 #include <avr/io.h>
+#include <util/delay.h>
 #else
 #include <inavr.h>
 #include <ioavr.h>
 #endif
-#include "USI_TWI_Master.h"
+
+//********** Defines **********//
+// Defines controlling timing limits
+#define TWI_FAST_MODE
+
+#define SYS_CLK 4000.0 // [kHz]
+
+#ifdef TWI_FAST_MODE                            // TWI FAST mode timing limits. SCL = 100-400kHz
+#define T2_TWI ((SYS_CLK * 1300) / 1000000) + 1 // >1,3us
+#define T4_TWI ((SYS_CLK * 600) / 1000000) + 1  // >0,6us
+
+#else                                           // TWI STANDARD mode timing limits. SCL <= 100kHz
+#define T2_TWI ((SYS_CLK * 4700) / 1000000) + 1 // >4,7us
+#define T4_TWI ((SYS_CLK * 4000) / 1000000) + 1 // >4,0us
+#endif
+
+// Defines controling code generating
+//#define PARAM_VERIFICATION
+//#define NOISE_TESTING
+#define SIGNAL_VERIFY
+
+// USI_TWI messages and flags and bit masks
+//#define SUCCESS   7
+//#define MSG       0
+/****************************************************************************
+  Bit and byte definitions
+****************************************************************************/
+#define TWI_READ_BIT 0 // Bit position for R/W bit in "address byte".
+#define TWI_ADR_BITS 1 // Bit position for LSB of the slave address bits in the init byte.
+#define TWI_NACK_BIT 0 // Bit position for (N)ACK bit.
+
+// Device dependant defines
+#if __GNUC__
+#include "usi_io.h"
+#else //__GNUC__
+#if defined(__AT90Mega169__) || defined(__ATmega169__) || defined(__AT90Mega165__) || defined(__ATmega165__)           \
+    || defined(__ATmega325__) || defined(__ATmega3250__) || defined(__ATmega645__) || defined(__ATmega6450__)          \
+    || defined(__ATmega329__) || defined(__ATmega3290__) || defined(__ATmega649__) || defined(__ATmega6490__)
+#define DDR_USI DDRE
+#define PORT_USI PORTE
+#define PIN_USI PINE
+#define PORT_USI_SDA PORTE5
+#define PORT_USI_SCL PORTE4
+#define PIN_USI_SDA PINE5
+#define PIN_USI_SCL PINE4
+#endif
+
+#if defined(__ATtiny25__) || defined(__ATtiny45__) || defined(__ATtiny85__) || defined(__AT90Tiny26__)                 \
+    || defined(__ATtiny26__)
+#define DDR_USI DDRB
+#define PORT_USI PORTB
+#define PIN_USI PINB
+#define PORT_USI_SDA PORTB0
+#define PORT_USI_SCL PORTB2
+#define PIN_USI_SDA PINB0
+#define PIN_USI_SCL PINB2
+#endif
+
+#if defined(__AT90Tiny2313__) || defined(__ATtiny2313__)
+#define DDR_USI DDRB
+#define PORT_USI PORTB
+#define PIN_USI PINB
+#define PORT_USI_SDA PORTB5
+#define PORT_USI_SCL PORTB7
+#define PIN_USI_SDA PINB5
+#define PIN_USI_SCL PINB7
+#endif
+#ifndef DDR_USI_CL
+#define DDR_USI_CL DDR_USI
+#define PORT_USI_CL PORT_USI
+#define PIN_USI_CL PIN_USI
+#endif
+#endif //__GNUC__
+
+// General defines
+#define TRUE 1
+#define FALSE 0
+
+#if __GNUC__
+#define DELAY_T2TWI (_delay_us(T2_TWI / 4))
+#define DELAY_T4TWI (_delay_us(T4_TWI / 4))
+#else
+#define DELAY_T2TWI (__delay_cycles(T2_TWI))
+#define DELAY_T4TWI (__delay_cycles(T4_TWI))
+#endif
 
 unsigned char USI_TWI_Master_Transfer(unsigned char);
 unsigned char USI_TWI_Master_Stop(void);
@@ -45,9 +135,6 @@ union USI_TWI_state {
 	};
 } USI_TWI_state;
 
-/*---------------------------------------------------------------
- USI TWI single master initialization function
----------------------------------------------------------------*/
 void USI_TWI_Master_Initialise(void)
 {
 	PORT_USI |= (1 << PIN_USI_SDA); // Enable pullup on SDA, to set high as released state.
@@ -65,36 +152,15 @@ void USI_TWI_Master_Initialise(void)
 	        (0x0 << USICNT0);                                             // and reset counter.
 }
 
-/*---------------------------------------------------------------
-Use this function to get hold of the error message from the last transmission
----------------------------------------------------------------*/
 unsigned char USI_TWI_Get_State_Info(void)
 {
 	return (USI_TWI_state.errorState); // Return error state.
 }
 
-/*---------------------------------------------------------------
- USI Transmit and receive function. LSB of first byte in data
- indicates if a read or write cycles is performed. If set a read
- operation is performed.
-
- Function generates (Repeated) Start Condition, sends address and
- R/W, Reads/Writes Data, and verifies/sends ACK.
-
- Success or error code is returned. Error codes are defined in
- USI_TWI_Master.h
----------------------------------------------------------------*/
 unsigned char USI_TWI_Start_Transceiver_With_Data(unsigned char *msg, unsigned char msgSize) {
 	return USI_TWI_Start_Transceiver_With_Data_Stop(msg, msgSize, TRUE);
 }
 
-/*---------------------------------------------------------------
- USI Transmit and receive function.
-
- Same as USI_TWI_Start_Transceiver_With_Data() but with an additional
- parameter that defines if a Stop Condition should be send at the end
- of the transmission.
----------------------------------------------------------------*/
 #ifndef __GNUC__
 __x // AVR compiler
 #endif
@@ -213,11 +279,11 @@ __x // AVR compiler
 	return (TRUE);
 }
 
-/*---------------------------------------------------------------
- Core function for shifting data in and out from the USI.
- Data to be sent has to be placed into the USIDR prior to calling
- this function. Data read, will be return'ed from the function.
----------------------------------------------------------------*/
+/**
+ * Core function for shifting data in and out from the USI.  Data to be sent
+ * has to be placed into the USIDR prior to calling this function. Data read,
+ * will be return'ed from the function.
+ */
 unsigned char USI_TWI_Master_Transfer(unsigned char temp)
 {
 	USISR = temp;                                          // Set USISR according to temp.
@@ -243,10 +309,9 @@ unsigned char USI_TWI_Master_Transfer(unsigned char temp)
 	return temp; // Return the data from the USIDR
 }
 
-/*---------------------------------------------------------------
- Function for generating a TWI Stop Condition. Used to release
- the TWI bus.
----------------------------------------------------------------*/
+/**
+ * Function for generating a TWI Stop Condition. Used to release the TWI bus.
+ */
 unsigned char USI_TWI_Master_Stop(void)
 {
 	PORT_USI &= ~(1 << PIN_USI_SDA); // Pull SDA low.
