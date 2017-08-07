@@ -58,22 +58,11 @@ unsigned char USI_TWI_Get_State_Info(void);
  * Function generates a (possibly repeated) Start Condition, sends address and
  * R/W bit, reads/writes Data, and verifies/sends ACK.
  *
+ * The stop parameter determines whether a Stop Condition is sent at the end of
+ * the transmission. By setting this to false repeated starts can be initiated.
+ *
  * Success or error code (defined above) is returned.
  */
 unsigned char USI_TWI_Start_Transceiver_With_Data(
-	unsigned char *msg, unsigned char msgSize);
-
-/**
- * USI Transmit and receive function.
- *
- * Same as USI_TWI_Start_Transceiver_With_Data() but with an additional
- * parameter that defines if a Stop Condition should be send at the end of the
- * transmission.
- */
-#ifndef __GNUC__
-__x // AVR compiler
-#endif
-unsigned char USI_TWI_Start_Transceiver_With_Data_Stop(
-	unsigned char *msg, unsigned char msgSize, unsigned char stop);
-
+		unsigned char *msg, unsigned char msgSize, unsigned char stop);
 #endif // USI_TWI_MASTER_H

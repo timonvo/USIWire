@@ -157,15 +157,8 @@ unsigned char USI_TWI_Get_State_Info(void)
 	return (USI_TWI_state.errorState); // Return error state.
 }
 
-unsigned char USI_TWI_Start_Transceiver_With_Data(unsigned char *msg, unsigned char msgSize) {
-	return USI_TWI_Start_Transceiver_With_Data_Stop(msg, msgSize, TRUE);
-}
-
-#ifndef __GNUC__
-__x // AVR compiler
-#endif
-    unsigned char
-    USI_TWI_Start_Transceiver_With_Data_Stop(unsigned char *msg, unsigned char msgSize, unsigned char stop)
+unsigned char USI_TWI_Start_Transceiver_With_Data(
+		unsigned char *msg, unsigned char msgSize, unsigned char stop)
 {
 	unsigned char tempUSISR_8bit = (1 << USISIF) | (1 << USIOIF) | (1 << USIPF) | (1 << USIDC)
 	                               |                 // Prepare register value to: Clear flags, and
